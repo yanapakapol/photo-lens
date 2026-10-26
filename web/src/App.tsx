@@ -291,9 +291,10 @@ export default function App() {
       }
     }
     samples.sort((a, b) => b - a);
-    // 70th percentile of "nearness" in the subject region ≈ person plane
+    // Median of the center region — more stable than extreme percentiles
+    // when grass/ground sits inside the crop with the person.
     const focusRel = samples.length
-      ? samples[Math.floor(samples.length * 0.25)]
+      ? samples[Math.floor(samples.length * 0.45)]
       : 0.55;
     const focusM = Math.max(0.4, Math.min(12, metersFromRel(focusRel)));
     setState((s) => ({ ...s, lens: { ...s.lens, focusRel, focusM } }));
@@ -740,6 +741,16 @@ export default function App() {
                   onChange={(v) => setLens({ strength: v })}
                   onCommit={() => setLens({}, true)}
                   format={(v) => `${Math.round(v * 100)}%`}
+                />
+                <Slider
+                  label="Bokeh ball size"
+                  value={state.lens.bokehSize}
+                  min={0.3}
+                  max={2.5}
+                  step={0.05}
+                  onChange={(v) => setLens({ bokehSize: v })}
+                  onCommit={() => setLens({}, true)}
+                  format={(v) => `${v.toFixed(1)}×`}
                 />
                 <Slider
                   label="Focus distance"

@@ -24,6 +24,8 @@ export interface LensParams {
   sceneScaleM: number;
   /** Blur intensity multiplier, 0–2. */
   strength: number;
+  /** Bokeh ball size multiplier 0–2 (scales highlight discs). */
+  bokehSize: number;
   /** Aperture rendering style (bokeh shape). */
   style: BokehStyle;
 }
@@ -78,6 +80,7 @@ export const DEFAULT_STATE: PipelineState = {
     focusRel: 0.55,
     sceneScaleM: 12,
     strength: 0.75,
+    bokehSize: 1.0,
     style: "soft",
   },
   tele: { k: 1, subjectM: 1.8 },

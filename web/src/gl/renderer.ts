@@ -279,13 +279,12 @@ export class LensRenderer {
         48 * apertureGain * resGain * strength,
         Math.min(ww, wh) * 0.05,
       );
-      // Whole-subject keep-sharp band: wider aperture → slightly thinner band
-      // but still thick enough to cover a full person (not a pin on the face).
-      // f/1.4 ≈ 0.28 depth units; f/5.6 ≈ 0.45 (almost everything sharp).
-      const subjectBand = 0.22 + 0.18 * (1.4 / fStop);
-      // Foreground (nearer than subject) stays sharp for a while, then mild blur.
-      const nearBand = 0.12;
-      const nearBlur = 0.35 * strength; // subtle — phone portrait apps barely blur near field
+      // Subject band: thin enough that distant mountains still blur.
+      // f/1.4 ≈ 0.14, f/5.6 ≈ 0.22 (still protects a full person).
+      const subjectBand = 0.10 + 0.10 * (1.4 / fStop);
+      // Near field: barely touch the grass/boat in front of the subject.
+      const nearBand = 0.10;
+      const nearBlur = 0.12 * strength;
 
       const styleIds: Record<string, number> = {
         soft: 0, bubble: 1, hex: 2, cateye: 3, swirl: 4, star: 5,
@@ -298,6 +297,7 @@ export class LensRenderer {
       gl.uniform1f(gl.getUniformLocation(p, "uSubjectBand"), subjectBand);
       gl.uniform1f(gl.getUniformLocation(p, "uNearBand"), nearBand);
       gl.uniform1f(gl.getUniformLocation(p, "uNearBlur"), nearBlur);
+      gl.uniform1f(gl.getUniformLocation(p, "uBokehSize"), state.lens.bokehSize);
       gl.uniform1f(gl.getUniformLocation(p, "uStyle"), styleIds[state.lens.style] ?? 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       currentTex = bokeh.tex;

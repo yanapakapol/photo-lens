@@ -64,27 +64,29 @@ uniform float uHighlightBoost;
 uniform float uSubjectBand; // depth units behind focus kept fully sharp (whole subject)
 uniform float uNearBand;    // depth units in front of focus kept sharp before near-blur
 uniform float uNearBlur;    // 0..1 strength of foreground blur (usually mild)
+uniform float uBokehSize;   // highlight disc size multiplier 0–2
 uniform float uStyle;
 uniform float uAspect;
 
 const int TAPS = 48;
 const float GA = 2.39996323;
 
-/** Portrait-app CoC: soft ramp out of the subject band (no hard edge line),
- *  progressive background blur by distance behind the subject. */
+/** CoC (portrait-app style, asymmetric):
+ *  - Subject band = hard zero (razor edges)
+ *  - Far background: progressive blur that grows with distance
+ *  - Near foreground: only mild (phone portrait apps barely blur near field) */
 float cocOf(float rel) {
   float bandStart = uFocusDepth - uSubjectBand;
-  // Smoothstep over ~0.08 depth units so the subject edge doesn't get a drawn outline.
-  float behind = smoothstep(bandStart + 0.08, bandStart - 0.05, rel);
-  // Scale "behind" by how far past the band we are for progressive blur
-  float depthPast = max(0.0, bandStart - rel);
-  float farCoc = behind * depthPast * uCocScale;
-  // Soft near-field
   float nearStart = uFocusDepth + uNearBand;
-  float nearSoft = smoothstep(nearStart - 0.05, nearStart + 0.08, rel);
-  float nearDepth = max(0.0, rel - nearStart);
-  float nearCoc = nearSoft * nearDepth * uCocScale * uNearBlur;
-  return min(uMaxCoc, max(farCoc, nearCoc));
+  if (rel >= bandStart && rel <= nearStart) return 0.0;
+  if (rel < bandStart) {
+    float past = bandStart - rel;
+    float feather = smoothstep(0.0, 0.035, past);
+    return min(uMaxCoc, feather * past * uCocScale);
+  }
+  float pastN = rel - nearStart;
+  float featherN = smoothstep(0.0, 0.04, pastN);
+  return min(uMaxCoc, featherN * pastN * uCocScale * uNearBlur);
 }
 
 // Signed aperture mask in unit disc coords (x,y in [-1,1]).
@@ -132,34 +134,31 @@ void main() {
   }
 
   float lum = dot(center, vec3(0.2126, 0.7152, 0.0722));
-  // Gentle highlight gain only for bubble/star; avoid sky stains.
-  float hGain = (uStyle > 0.5 && uStyle < 1.5) || uStyle > 4.5
-    ? uHighlightBoost * smoothstep(0.82, 1.0, lum)
-    : uHighlightBoost * 0.25 * smoothstep(0.88, 1.0, lum);
-  vec3 c0 = center * (1.0 + hGain);
+  // Bright points become large bokeh balls; scale with uBokehSize.
+  float hi = smoothstep(0.55, 0.95, lum);
+  float hGain = uHighlightBoost * (0.4 + 2.2 * hi) * mix(1.0, 1.8, uBokehSize - 1.0 > 0.0 ? min(uBokehSize - 1.0, 1.0) : 0.0);
+  // Highlight pixels use a larger effective disc (the “ดวง bokeh”)
+  float radius = coc * mix(1.0, 1.0 + 0.9 * uBokehSize * hi, 1.0);
+  radius = max(radius, coc);
+
+  vec3 c0 = center * (1.0 + hGain * hi);
 
   vec2 centerUV = vUv - 0.5;
-  // Cat-eye / swirl bias from optical axis
-  vec3 sum = c0 * 0.35;
-  float wsum = 0.35;
-  float radius = coc;
+  vec3 sum = c0 * 0.28;
+  float wsum = 0.28;
 
   for (int i = 1; i <= TAPS; i++) {
     float fi = float(i);
-    float rn = sqrt(fi / float(TAPS)); // uniform disc
+    float rn = sqrt(fi / float(TAPS));
     float a = fi * GA;
     vec2 dir = vec2(cos(a), sin(a));
-
-    // Style-dependent sample layout in unit disc
     vec2 q = dir * rn;
     if (uStyle > 3.5 && uStyle < 4.5) {
-      // Swirl: rotate samples by radius
       float twist = rn * 2.4;
       float ca = cos(twist), sa = sin(twist);
       q = vec2(q.x * ca - q.y * sa, q.x * sa + q.y * ca);
     }
     if (uStyle > 2.5 && uStyle < 3.5) {
-      // Cat-eye: squeeze toward center as we leave the frame
       float edge = length(centerUV) * 1.6;
       q.x *= mix(1.0, 0.35, clamp(edge, 0.0, 1.0));
     }
@@ -173,11 +172,9 @@ void main() {
 
     float relT = texture(uDepth, uvc).r;
     float cocT = cocOf(relT);
-    // Scatter-as-gather: include if this tap's CoC reaches the current pixel.
+    if (cocT < 0.5 && relT > uFocusDepth - uSubjectBand) continue; // don't pull sharp subject
     float reach = max(cocT, coc);
     float w = smoothstep(reach + 1.0, reach - 1.5, dist);
-    // Near-field spread only if BOTH pixels are out of the sharp band —
-    // prevents a drawn outline around the subject edge.
     if (relT > rel + 0.04 && cocT > 1.5 && coc > 1.0) {
       w = max(w, smoothstep(cocT + 1.0, cocT - 2.0, dist));
     }
@@ -185,10 +182,14 @@ void main() {
 
     vec3 ct = texture(uColor, uvc).rgb;
     float lumT = dot(ct, vec3(0.2126, 0.7152, 0.0722));
-    ct *= 1.0 + hGain * 0.5 * smoothstep(0.85, 1.0, lumT);
-
-    // Soft disc edge
-    w *= mask * (1.0 - smoothstep(0.88, 1.05, rn));
+    // Strong bright-sample weight → visible bokeh balls from point lights
+    float hiT = smoothstep(0.5, 0.92, lumT);
+    ct *= 1.0 + hGain * (0.3 + 1.6 * hiT);
+    w *= mask * (0.25 + 0.75 * hiT) * (1.0 - smoothstep(0.86, 1.08, rn));
+    // Soft disc edge for bubble-like rim
+    if (uStyle > 0.5 && uStyle < 1.5) {
+      w *= 1.0 + 0.45 * smoothstep(0.7, 0.95, rn) * (1.0 - smoothstep(0.95, 1.05, rn));
+    }
     sum += ct * w;
     wsum += w;
   }

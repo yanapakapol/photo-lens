@@ -1,28 +1,50 @@
-/** Depth Anything V2 Small (Apache-2.0) via ONNX Runtime Web.
- *  Model at /models/dav2-small-int8.onnx (same-origin, offline after first load).
- *  License Apache-2.0 — verified on HF card + GitHub LICENSE. */
+/** Depth Anything V2 via ONNX Runtime Web.
+ *  int8 build (~27 MB) for fast load; cached in Cache API after first fetch.
+ *  License Apache-2.0. */
 import * as ort from "onnxruntime-web";
 import type { DepthMap } from "./types";
 
 const BASE = import.meta.env.BASE_URL || "/";
-const MODEL_URL = `${BASE}models/dav2-small-fp16.onnx`;
+const MODEL_URL = `${BASE}models/dav2-small-int8.onnx`;
+const CACHE = "photolens-depth-v2";
 const INPUT = 518;
 
-// Bundled WASM from ORT package (no external wasmPaths).
 ort.env.wasm.numThreads = 1;
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 
+async function fetchModel(): Promise<ArrayBuffer> {
+  if (typeof caches !== "undefined") {
+    try {
+      const cache = await caches.open(CACHE);
+      const hit = await cache.match(MODEL_URL);
+      if (hit) return hit.arrayBuffer();
+    } catch {
+      /* private mode */
+    }
+  }
+  const res = await fetch(MODEL_URL);
+  if (!res.ok) throw new Error(`Depth model HTTP ${res.status}`);
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength < 1_000_000) throw new Error("Depth model truncated");
+  if (typeof caches !== "undefined") {
+    try {
+      const cache = await caches.open(CACHE);
+      await cache.put(MODEL_URL, new Response(buf.slice(0), {
+        headers: { "Content-Type": "application/octet-stream" },
+      }));
+    } catch {
+      /* ignore */
+    }
+  }
+  return buf;
+}
+
 async function getSession(): Promise<ort.InferenceSession> {
   if (!sessionPromise) {
     sessionPromise = (async () => {
-      const res = await fetch(MODEL_URL);
-      if (!res.ok) throw new Error(`Depth model HTTP ${res.status}`);
-      const buf = await res.arrayBuffer();
-      if (buf.byteLength < 1_000_000) throw new Error("Depth model truncated");
-      return ort.InferenceSession.create(buf, {
-        executionProviders: ["wasm"],
-      });
+      const buf = await fetchModel();
+      return ort.InferenceSession.create(buf, { executionProviders: ["wasm"] });
     })().catch((e) => {
       sessionPromise = null;
       throw e;
@@ -77,8 +99,6 @@ export async function estimateDepthOnnx(
   const oh = dims[dims.length - 2];
   const ow = dims[dims.length - 1];
 
-  // Content only occupies the top-left nw×nh of the 518×518 canvas
-  // (keep-aspect resize + gray pad). Normalize and un-map over that region only.
   const validOw = Math.max(1, Math.round((nw / INPUT) * ow));
   const validOh = Math.max(1, Math.round((nh / INPUT) * oh));
   let min = Infinity;
@@ -113,6 +133,7 @@ export async function estimateDepthOnnx(
       depth[y * w + x] = Math.min(1, Math.max(0, (v - min) / range));
     }
   }
+  // Light smooth only — keep object edges reasonably sharp
   smooth3(depth, w, h);
   return { width: w, height: h, data: depth };
 }
