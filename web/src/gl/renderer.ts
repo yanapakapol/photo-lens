@@ -202,32 +202,54 @@ export class LensRenderer {
     const wh = Math.max(1, Math.round(H * scale));
 
     const warped = this.makeTarget("warped", ww, wh);
+    const warpedDepth = this.makeTarget("warpedDepth", ww, wh);
     const bokeh = this.makeTarget("bokeh", ww, wh);
     const half = this.makeTarget("half", Math.max(1, ww >> 1), Math.max(1, wh >> 1), true);
     const half2 = this.makeTarget("half2", half.w, half.h, true);
 
     let currentTex: WebGLTexture = this.colorTex;
+    let currentDepth: WebGLTexture = this.depthTex;
 
-    // --- Pass 1: telephoto warp (skip when k≈1) ---
+    // --- Pass 1: telephoto warp color + depth together (skip when k≈1) ---
     const k = state.tele.k;
     if (Math.abs(k - 1) > 0.005) {
       const p = this.programs.warp;
       this.bindQuad(p);
+      const uMode = gl.getUniformLocation(p, "uMode");
+      const uColor = gl.getUniformLocation(p, "uColor");
+      const uDepth = gl.getUniformLocation(p, "uDepth");
+      const uK = gl.getUniformLocation(p, "uK");
+      const uSub = gl.getUniformLocation(p, "uSubjectDepth");
+      const uComp = gl.getUniformLocation(p, "uCompression");
+      const uAsp = gl.getUniformLocation(p, "uAspect");
+
+      // Color
       gl.bindFramebuffer(gl.FRAMEBUFFER, warped.fb);
       gl.viewport(0, 0, ww, wh);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.colorTex);
-      gl.uniform1i(gl.getUniformLocation(p, "uColor"), 0);
+      gl.uniform1i(uColor, 0);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
-      gl.uniform1i(gl.getUniformLocation(p, "uDepth"), 1);
-      gl.uniform1f(gl.getUniformLocation(p, "uK"), k);
-      gl.uniform1f(gl.getUniformLocation(p, "uSubjectDepth"), relFromMeters(state.tele.subjectM));
-      // Compression strength grows mildly with k; keep conservative to avoid tearing.
-      gl.uniform1f(gl.getUniformLocation(p, "uCompression"), 0.22 * Math.min(1, (k - 1) * 1.4));
-      gl.uniform1f(gl.getUniformLocation(p, "uAspect"), aspect);
+      gl.uniform1i(uDepth, 1);
+      gl.uniform1f(uK, k);
+      gl.uniform1f(uSub, relFromMeters(state.tele.subjectM));
+      gl.uniform1f(uComp, 0.22 * Math.min(1, (k - 1) * 1.4));
+      gl.uniform1f(uAsp, aspect);
+      gl.uniform1f(uMode, 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       currentTex = warped.tex;
+
+      // Depth (same warp map → stays registered with color)
+      gl.bindFramebuffer(gl.FRAMEBUFFER, warpedDepth.fb);
+      gl.viewport(0, 0, ww, wh);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.colorTex); // unused in depth mode but bound
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
+      gl.uniform1f(uMode, 1);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      currentDepth = warpedDepth.tex;
     }
 
     // --- Pass 2: disc bokeh (skip when strength=0) ---
@@ -241,7 +263,7 @@ export class LensRenderer {
       gl.bindTexture(gl.TEXTURE_2D, currentTex);
       gl.uniform1i(gl.getUniformLocation(p, "uColor"), 0);
       gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
+      gl.bindTexture(gl.TEXTURE_2D, currentDepth);
       gl.uniform1i(gl.getUniformLocation(p, "uDepth"), 1);
       gl.uniform2f(gl.getUniformLocation(p, "uTexel"), 1 / ww, 1 / wh);
       gl.uniform1f(gl.getUniformLocation(p, "uAspect"), aspect);

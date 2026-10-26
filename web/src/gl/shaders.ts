@@ -12,7 +12,8 @@ void main() {
   gl_Position = vec4(aPos, 0.0, 1.0);
 }`;
 
-/** Telephoto: always zoom by k + mild depth compression (clamped). */
+/** Telephoto warp. uMode: 0 = color, 1 = depth (r channel only).
+ *  Depth is warped with the same map as color so bokeh stays registered. */
 export const FRAG_WARP = `#version 300 es
 precision highp float;
 in vec2 vUv;
@@ -23,17 +24,13 @@ uniform float uK;
 uniform float uSubjectDepth;
 uniform float uCompression;
 uniform float uAspect;
+uniform float uMode; // 0 color, 1 depth
 
 void main() {
   vec2 c = vec2(0.5, 0.5);
   vec2 p = vUv - c;
   p.x *= uAspect;
-  float rel = 0.0;
-  rel += texture(uDepth, vUv).r * 0.4;
-  rel += texture(uDepth, vUv + vec2(0.008, 0.0)).r * 0.15;
-  rel += texture(uDepth, vUv - vec2(0.008, 0.0)).r * 0.15;
-  rel += texture(uDepth, vUv + vec2(0.0, 0.008)).r * 0.15;
-  rel += texture(uDepth, vUv - vec2(0.0, 0.008)).r * 0.15;
+  float rel = texture(uDepth, vUv).r;
   float dSub = clamp(rel - uSubjectDepth, -1.0, 1.0);
   float farBoost = uCompression * max(0.0, -dSub);
   float nearPull = uCompression * 0.4 * max(0.0, dSub);
@@ -41,7 +38,13 @@ void main() {
   vec2 src = p / max(s, 1e-4);
   src.x /= uAspect;
   src += c;
-  frag = texture(uColor, clamp(src, vec2(0.002), vec2(0.998)));
+  src = clamp(src, vec2(0.002), vec2(0.998));
+  if (uMode > 0.5) {
+    float d = texture(uDepth, src).r;
+    frag = vec4(d, d, d, 1.0);
+  } else {
+    frag = texture(uColor, src);
+  }
 }`;
 
 /** Depth-aware bokeh with selectable aperture style.
@@ -67,16 +70,20 @@ uniform float uAspect;
 const int TAPS = 48;
 const float GA = 2.39996323;
 
-/** Portrait-app CoC: keep the whole subject (and anything nearer within
- *  uNearBand) sharp; blur only the background, growing with distance
- *  behind the subject (progressive, not a thin focus slice). */
+/** Portrait-app CoC: soft ramp out of the subject band (no hard edge line),
+ *  progressive background blur by distance behind the subject. */
 float cocOf(float rel) {
-  // Farther than subject band (rel smaller than focus − band)
-  float behind = (uFocusDepth - uSubjectBand) - rel;
-  float farCoc = max(0.0, behind) * uCocScale;
-  // Optional mild foreground blur past the near band
-  float near = rel - (uFocusDepth + uNearBand);
-  float nearCoc = max(0.0, near) * uCocScale * uNearBlur;
+  float bandStart = uFocusDepth - uSubjectBand;
+  // Smoothstep over ~0.08 depth units so the subject edge doesn't get a drawn outline.
+  float behind = smoothstep(bandStart + 0.08, bandStart - 0.05, rel);
+  // Scale "behind" by how far past the band we are for progressive blur
+  float depthPast = max(0.0, bandStart - rel);
+  float farCoc = behind * depthPast * uCocScale;
+  // Soft near-field
+  float nearStart = uFocusDepth + uNearBand;
+  float nearSoft = smoothstep(nearStart - 0.05, nearStart + 0.08, rel);
+  float nearDepth = max(0.0, rel - nearStart);
+  float nearCoc = nearSoft * nearDepth * uCocScale * uNearBlur;
   return min(uMaxCoc, max(farCoc, nearCoc));
 }
 
@@ -166,12 +173,14 @@ void main() {
 
     float relT = texture(uDepth, uvc).r;
     float cocT = cocOf(relT);
-    // Scatter-as-gather: include if tap CoC reaches us, or near-field spreads.
+    // Scatter-as-gather: include if this tap's CoC reaches the current pixel.
     float reach = max(cocT, coc);
     float w = smoothstep(reach + 1.0, reach - 1.5, dist);
-    if (relT > rel + 0.02) w = max(w, smoothstep(cocT + 1.0, cocT - 2.0, dist));
-    // Never let near-field leak onto much sharper center
-    if (coc < 1.5 && relT > rel + 0.08) w = 0.0;
+    // Near-field spread only if BOTH pixels are out of the sharp band —
+    // prevents a drawn outline around the subject edge.
+    if (relT > rel + 0.04 && cocT > 1.5 && coc > 1.0) {
+      w = max(w, smoothstep(cocT + 1.0, cocT - 2.0, dist));
+    }
     if (w <= 0.001) continue;
 
     vec3 ct = texture(uColor, uvc).rgb;
