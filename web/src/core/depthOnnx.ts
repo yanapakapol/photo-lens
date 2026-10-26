@@ -5,7 +5,7 @@ import * as ort from "onnxruntime-web";
 import type { DepthMap } from "./types";
 
 const BASE = import.meta.env.BASE_URL || "/";
-const MODEL_URL = `${BASE}models/dav2-small-int8.onnx`;
+const MODEL_URL = `${BASE}models/dav2-small-fp16.onnx`;
 const INPUT = 518;
 
 // Bundled WASM from ORT package (no external wasmPaths).

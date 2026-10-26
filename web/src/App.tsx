@@ -278,7 +278,25 @@ export default function App() {
     depthSourceRef.current = source;
     setDepthSource(source);
     rendererRef.current?.setDepth(depth);
-    // refresh peek overlay
+    // Auto-focus on the nearest strong subject in the center band
+    // (typical portrait placement) so the whole person stays sharp.
+    const cx0 = Math.floor(depth.width * 0.3);
+    const cx1 = Math.floor(depth.width * 0.7);
+    const cy0 = Math.floor(depth.height * 0.25);
+    const cy1 = Math.floor(depth.height * 0.75);
+    const samples: number[] = [];
+    for (let y = cy0; y < cy1; y += 2) {
+      for (let x = cx0; x < cx1; x += 2) {
+        samples.push(depth.data[y * depth.width + x]);
+      }
+    }
+    samples.sort((a, b) => b - a);
+    // 70th percentile of "nearness" in the subject region ≈ person plane
+    const focusRel = samples.length
+      ? samples[Math.floor(samples.length * 0.25)]
+      : 0.55;
+    const focusM = Math.max(0.4, Math.min(12, metersFromRel(focusRel)));
+    setState((s) => ({ ...s, lens: { ...s.lens, focusRel, focusM } }));
     if (depthPeek) setDepthPeek(false);
   };
 
