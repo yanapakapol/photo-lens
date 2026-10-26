@@ -246,22 +246,24 @@ export class LensRenderer {
       gl.uniform2f(gl.getUniformLocation(p, "uTexel"), 1 / ww, 1 / wh);
       gl.uniform1f(gl.getUniformLocation(p, "uAspect"), aspect);
 
-      // Aperture diameter ∝ f/N — this is what makes ƒ/1.4 vs ƒ/5.6 obvious.
-      // CoC (mm on sensor) ∝ f²/N · |1/S − 1/D| → relative form K·|Δ|.
+      // Aperture diameter ∝ f/N — drives max blur and subject-band thickness.
       const fStop = Math.max(0.7, state.lens.fNumber);
       const focal = state.lens.focalMm;
-      // K in px per depth-unit at this resolution. ƒ/1.4 ≈ 4× ƒ/2.8, etc.
-      const apertureGain = (focal / 35) * (1.8 / fStop); // 1.8/1.4≈1.29 … 1.8/5.6≈0.32
+      const apertureGain = (focal / 35) * (1.8 / fStop);
       const resGain = ww / 1100;
-      const cocScale = 90 * apertureGain * resGain * strength;
-      // Hard cap so f/1.4 still looks photographic, not smeared.
+      // Background blur grows with distance behind subject (progressive).
+      const cocScale = 85 * apertureGain * resGain * strength;
       const maxCoc = Math.min(
-        52 * apertureGain * resGain * strength,
-        Math.min(ww, wh) * 0.055,
+        48 * apertureGain * resGain * strength,
+        Math.min(ww, wh) * 0.05,
       );
-      // DOF plateau: wide aperture → thin subject plane; narrow → deep.
-      // f/1.4 keeps ~±0.04 depth; f/5.6 keeps ~±0.16 (almost everything).
-      const plateau = (0.028 + 0.075 * (1.4 / fStop)) * (1 / Math.max(strength, 0.15));
+      // Whole-subject keep-sharp band: wider aperture → slightly thinner band
+      // but still thick enough to cover a full person (not a pin on the face).
+      // f/1.4 ≈ 0.28 depth units; f/5.6 ≈ 0.45 (almost everything sharp).
+      const subjectBand = 0.22 + 0.18 * (1.4 / fStop);
+      // Foreground (nearer than subject) stays sharp for a while, then mild blur.
+      const nearBand = 0.12;
+      const nearBlur = 0.35 * strength; // subtle — phone portrait apps barely blur near field
 
       const styleIds: Record<string, number> = {
         soft: 0, bubble: 1, hex: 2, cateye: 3, swirl: 4, star: 5,
@@ -271,7 +273,9 @@ export class LensRenderer {
       gl.uniform1f(gl.getUniformLocation(p, "uFocusDepth"), state.lens.focusRel);
       gl.uniform1f(gl.getUniformLocation(p, "uMaxCoc"), Math.max(1.0, maxCoc));
       gl.uniform1f(gl.getUniformLocation(p, "uHighlightBoost"), 0.35 * strength);
-      gl.uniform1f(gl.getUniformLocation(p, "uDofPlateau"), plateau);
+      gl.uniform1f(gl.getUniformLocation(p, "uSubjectBand"), subjectBand);
+      gl.uniform1f(gl.getUniformLocation(p, "uNearBand"), nearBand);
+      gl.uniform1f(gl.getUniformLocation(p, "uNearBlur"), nearBlur);
       gl.uniform1f(gl.getUniformLocation(p, "uStyle"), styleIds[state.lens.style] ?? 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       currentTex = bokeh.tex;

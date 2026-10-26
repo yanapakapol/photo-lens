@@ -58,18 +58,26 @@ uniform float uCocScale;
 uniform float uFocusDepth;
 uniform float uMaxCoc;
 uniform float uHighlightBoost;
-uniform float uDofPlateau;  // depth units kept fully sharp around focus
-uniform float uStyle;       // aperture style id
+uniform float uSubjectBand; // depth units behind focus kept fully sharp (whole subject)
+uniform float uNearBand;    // depth units in front of focus kept sharp before near-blur
+uniform float uNearBlur;    // 0..1 strength of foreground blur (usually mild)
+uniform float uStyle;
 uniform float uAspect;
 
 const int TAPS = 48;
 const float GA = 2.39996323;
 
+/** Portrait-app CoC: keep the whole subject (and anything nearer within
+ *  uNearBand) sharp; blur only the background, growing with distance
+ *  behind the subject (progressive, not a thin focus slice). */
 float cocOf(float rel) {
-  float d = abs(rel - uFocusDepth);
-  // Dead-zone so the subject plane (face + body at similar depth) stays sharp.
-  float excess = max(0.0, d - uDofPlateau);
-  return min(uMaxCoc, excess * uCocScale);
+  // Farther than subject band (rel smaller than focus − band)
+  float behind = (uFocusDepth - uSubjectBand) - rel;
+  float farCoc = max(0.0, behind) * uCocScale;
+  // Optional mild foreground blur past the near band
+  float near = rel - (uFocusDepth + uNearBand);
+  float nearCoc = max(0.0, near) * uCocScale * uNearBlur;
+  return min(uMaxCoc, max(farCoc, nearCoc));
 }
 
 // Signed aperture mask in unit disc coords (x,y in [-1,1]).

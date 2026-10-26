@@ -77,25 +77,31 @@ export async function estimateDepthOnnx(
   const oh = dims[dims.length - 2];
   const ow = dims[dims.length - 1];
 
+  // Content only occupies the top-left nw×nh of the 518×518 canvas
+  // (keep-aspect resize + gray pad). Normalize and un-map over that region only.
+  const validOw = Math.max(1, Math.round((nw / INPUT) * ow));
+  const validOh = Math.max(1, Math.round((nh / INPUT) * oh));
   let min = Infinity;
   let max = -Infinity;
-  for (let i = 0; i < data.length; i++) {
-    const v = data[i];
-    if (v < min) min = v;
-    if (v > max) max = v;
+  for (let y = 0; y < validOh; y++) {
+    for (let x = 0; x < validOw; x++) {
+      const v = data[y * ow + x];
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
   }
   const range = Math.max(max - min, 1e-6);
 
   const depth = new Float32Array(w * h);
   for (let y = 0; y < h; y++) {
-    const fy = (y / h) * (oh - 1);
+    const fy = (y / h) * (validOh - 1);
     const y0 = Math.floor(fy);
-    const y1 = Math.min(oh - 1, y0 + 1);
+    const y1 = Math.min(validOh - 1, y0 + 1);
     const ty = fy - y0;
     for (let x = 0; x < w; x++) {
-      const fx = (x / w) * (ow - 1);
+      const fx = (x / w) * (validOw - 1);
       const x0 = Math.floor(fx);
-      const x1 = Math.min(ow - 1, x0 + 1);
+      const x1 = Math.min(validOw - 1, x0 + 1);
       const tx = fx - x0;
       const v00 = data[y0 * ow + x0];
       const v10 = data[y0 * ow + x1];
