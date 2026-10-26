@@ -184,7 +184,48 @@ async function decodeImage(file: Blob): Promise<{ imageData: ImageData; name: st
   if (!ctx) throw new Error("Canvas unavailable");
   ctx.drawImage(bmp, 0, 0, w, h);
   bmp.close?.();
-  return { imageData: ctx.getImageData(0, 0, w, h), name };
+  let imageData = ctx.getImageData(0, 0, w, h);
+  imageData = trimBlackBars(imageData);
+  return { imageData, name };
+}
+
+/** Crop near-black letterbox bars so blur never samples them. */
+function trimBlackBars(img: ImageData): ImageData {
+  const { width: w, height: h, data } = img;
+  const dark = (x: number, y: number) => {
+    const i = (y * w + x) * 4;
+    return data[i] < 22 && data[i + 1] < 22 && data[i + 2] < 22;
+  };
+  const rowDark = (y: number) => {
+    let n = 0;
+    for (let x = 0; x < w; x += 4) if (dark(x, y)) n++;
+    return n > (w / 4) * 0.92;
+  };
+  const colDark = (x: number) => {
+    let n = 0;
+    for (let y = 0; y < h; y += 4) if (dark(x, y)) n++;
+    return n > (h / 4) * 0.92;
+  };
+  let top = 0;
+  let bottom = h - 1;
+  let left = 0;
+  let right = w - 1;
+  while (top < bottom - 8 && rowDark(top)) top++;
+  while (bottom > top + 8 && rowDark(bottom)) bottom--;
+  while (left < right - 8 && colDark(left)) left++;
+  while (right > left + 8 && colDark(right)) right--;
+  if (left === 0 && top === 0 && right === w - 1 && bottom === h - 1) return img;
+  const nw = right - left + 1;
+  const nh = bottom - top + 1;
+  if (nw < 32 || nh < 32) return img;
+  const out = new ImageData(nw, nh);
+  for (let y = 0; y < nh; y++) {
+    out.data.set(
+      data.subarray(((top + y) * w + left) * 4, ((top + y) * w + left + nw) * 4),
+      y * nw * 4,
+    );
+  }
+  return out;
 }
 
 export default function App() {

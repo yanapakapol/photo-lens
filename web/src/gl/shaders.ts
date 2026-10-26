@@ -167,7 +167,10 @@ void main() {
     if (mask <= 0.01) continue;
 
     vec2 offset = q * radius * uTexel;
-    vec2 uvc = clamp(vUv + offset, vec2(0.0), vec2(1.0));
+    vec2 uvc = vUv + offset;
+    // Don't pull from outside the frame (prevents black border bleed).
+    if (uvc.x < 0.0 || uvc.x > 1.0 || uvc.y < 0.0 || uvc.y > 1.0) continue;
+    uvc = clamp(uvc, vec2(0.001), vec2(0.999));
     float dist = rn * radius;
 
     float relT = texture(uDepth, uvc).r;
