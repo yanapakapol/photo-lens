@@ -82,36 +82,49 @@ const ICONS = {
 };
 
 function Slider({
+  label,
   value,
   min,
   max,
   step,
   onChange,
   onCommit,
+  format,
 }: {
+  label: string;
   value: number;
   min: number;
   max: number;
   step: number;
   onChange: (v: number) => void;
   onCommit?: () => void;
+  format?: (v: number) => string;
 }) {
   return (
-    <div className="dock__slider">
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        onPointerUp={() => onCommit?.()}
-        onKeyUp={() => onCommit?.()}
-      />
-      <div className="dock__ticks" aria-hidden>
-        {Array.from({ length: 11 }, (_, i) => (
-          <span key={i} className={i % 5 === 0 ? "maj" : ""} />
-        ))}
+    <div>
+      <div className="dock__label">
+        {label}
+        <span style={{ float: "right", fontFamily: "var(--mono)", textTransform: "none", letterSpacing: 0 }}>
+          {format ? format(value) : value.toFixed(2)}
+        </span>
+      </div>
+      <div className="dock__slider">
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          aria-label={label}
+          onChange={(e) => onChange(parseFloat(e.target.value))}
+          onPointerUp={() => onCommit?.()}
+          onKeyUp={() => onCommit?.()}
+        />
+        <div className="dock__ticks" aria-hidden>
+          {Array.from({ length: 11 }, (_, i) => (
+            <span key={i} className={i % 5 === 0 ? "maj" : ""} />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -497,7 +510,7 @@ export default function App() {
     <div className="app">
       <div className="app__frame">
         <header className="topbar">
-          <div className="topbar__group">
+          <div className="topbar__group glass" style={{ borderRadius: 20, padding: 4 }}>
             <button className="iconbtn" onClick={undo} disabled={!historyRef.current.length} title="Undo">
               {ICONS.undo}
             </button>
@@ -508,7 +521,7 @@ export default function App() {
               Photo Lens{meta.name ? <span> · {truncate(meta.name, 12)}</span> : null}
             </span>
           </div>
-          <div className="topbar__group">
+          <div className="topbar__group glass" style={{ borderRadius: 20, padding: 4 }}>
             {hasImage && (
               <>
                 <button
@@ -701,20 +714,27 @@ export default function App() {
                   ))}
                 </div>
                 <Slider
+                  label="Blur strength"
                   value={state.lens.strength}
                   min={0}
                   max={1.5}
                   step={0.01}
                   onChange={(v) => setLens({ strength: v })}
                   onCommit={() => setLens({}, true)}
+                  format={(v) => `${Math.round(v * 100)}%`}
                 />
                 <Slider
+                  label="Focus distance"
                   value={state.lens.focusM}
                   min={0.4}
                   max={8}
                   step={0.05}
-                  onChange={(v) => setLens({ focusM: v })}
+                  onChange={(v) => {
+                    const rel = Math.min(1, Math.max(0, metersFromRelInv(v)));
+                    setLens({ focusM: v, focusRel: rel });
+                  }}
                   onCommit={() => setLens({}, true)}
+                  format={(v) => `${v.toFixed(1)} m`}
                 />
               </>
             )}
@@ -733,20 +753,24 @@ export default function App() {
                   ))}
                 </div>
                 <Slider
+                  label="Tele zoom"
                   value={state.tele.k}
                   min={1}
                   max={2.5}
                   step={0.01}
                   onChange={(v) => setTele({ k: v })}
                   onCommit={() => setTele({}, true)}
+                  format={(v) => `${v.toFixed(2)}×`}
                 />
                 <Slider
+                  label="Subject distance"
                   value={state.tele.subjectM}
                   min={0.5}
                   max={6}
                   step={0.05}
                   onChange={(v) => setTele({ subjectM: v })}
                   onCommit={() => setTele({}, true)}
+                  format={(v) => `${v.toFixed(1)} m`}
                 />
               </>
             )}
@@ -766,20 +790,24 @@ export default function App() {
                   ))}
                 </div>
                 <Slider
+                  label="Halation"
                   value={state.film.halation}
                   min={0}
                   max={1}
                   step={0.01}
                   onChange={(v) => setFilm({ halation: v })}
                   onCommit={() => setFilm({}, true)}
+                  format={(v) => `${Math.round(v * 100)}%`}
                 />
                 <Slider
+                  label="Grain"
                   value={state.film.grain}
                   min={0}
                   max={1}
                   step={0.01}
                   onChange={(v) => setFilm({ grain: v })}
                   onCommit={() => setFilm({}, true)}
+                  format={(v) => `${Math.round(v * 100)}%`}
                 />
               </>
             )}
@@ -792,14 +820,17 @@ export default function App() {
                   </button>
                 </div>
                 <Slider
+                  label="Exposure"
                   value={state.adjust.exposure}
                   min={-3}
                   max={3}
                   step={0.05}
                   onChange={(v) => setAdjust({ exposure: v })}
                   onCommit={() => setAdjust({}, true)}
+                  format={(v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)} EV`}
                 />
                 <Slider
+                  label="Contrast"
                   value={state.adjust.contrast}
                   min={-1}
                   max={1}
@@ -808,6 +839,7 @@ export default function App() {
                   onCommit={() => setAdjust({}, true)}
                 />
                 <Slider
+                  label="Saturation"
                   value={state.adjust.saturation}
                   min={-1}
                   max={1}
@@ -816,6 +848,7 @@ export default function App() {
                   onCommit={() => setAdjust({}, true)}
                 />
                 <Slider
+                  label="Warmth"
                   value={state.adjust.temperature}
                   min={-1}
                   max={1}
@@ -848,10 +881,14 @@ export default function App() {
   );
 }
 
-/** rel-near [0,1] → metres using the same hyperbolic prior as the warp. */
+/** rel-near [0,1] → metres (same hyperbolic prior as warp). */
 function metersFromRel(rel: number, far = 12, near = 0.35): number {
   const t = Math.min(1, Math.max(0, rel));
   return (far * near) / (near + t * (far - near));
+}
+/** metres → rel-near [0,1]. */
+function metersFromRelInv(m: number, far = 12, near = 0.35): number {
+  return ((far * near) / Math.max(m, near) - near) / (far - near);
 }
 
 function fmtSigned(v: number): string {
