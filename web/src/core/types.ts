@@ -38,6 +38,10 @@ export interface TeleParams {
   k: number;
   /** Subject distance in metres (pixels near this depth keep size). */
   subjectM: number;
+  /** Zoom center X in image coords 0–1 (left→right). */
+  cx: number;
+  /** Zoom center Y in image coords 0–1 (top→bottom). */
+  cy: number;
 }
 
 export type FilmStockId =
@@ -83,7 +87,7 @@ export const DEFAULT_STATE: PipelineState = {
     bokehSize: 1.0,
     style: "soft",
   },
-  tele: { k: 1, subjectM: 1.8 },
+  tele: { k: 1, subjectM: 1.8, cx: 0.5, cy: 0.5 },
   film: { stock: "none", intensity: 0.85, halation: 0.5, grain: 0.4 },
   adjust: { exposure: 0, contrast: 0, saturation: 0, temperature: 0 },
 };

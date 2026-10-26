@@ -25,9 +25,10 @@ uniform float uSubjectDepth;
 uniform float uCompression;
 uniform float uAspect;
 uniform float uMode; // 0 color, 1 depth
+uniform vec2 uCenter; // zoom origin in UV (GL space: y up)
 
 void main() {
-  vec2 c = vec2(0.5, 0.5);
+  vec2 c = uCenter;
   vec2 p = vUv - c;
   p.x *= uAspect;
   float rel = texture(uDepth, vUv).r;
@@ -68,6 +69,13 @@ uniform float uBokehSize;   // highlight disc size multiplier 0–2
 uniform float uStyle;
 uniform float uAspect;
 
+/** Map relative depth [0=far,1=near] → approximate metres (UI + CoC only). */
+float metersOf(float rel) {
+  float far = 12.0;
+  float nearM = 0.35;
+  return far * nearM / (nearM + clamp(rel, 0.0, 1.0) * (far - nearM));
+}
+
 const int TAPS = 48;
 const float GA = 2.39996323;
 
@@ -78,15 +86,14 @@ const float GA = 2.39996323;
 float cocOf(float rel) {
   float bandStart = uFocusDepth - uSubjectBand;
   float nearStart = uFocusDepth + uNearBand;
-  if (rel >= bandStart && rel <= nearStart) return 0.0;
-  if (rel < bandStart) {
-    float past = bandStart - rel;
-    float feather = smoothstep(0.0, 0.035, past);
-    return min(uMaxCoc, feather * past * uCocScale);
-  }
-  float pastN = rel - nearStart;
-  float featherN = smoothstep(0.0, 0.04, pastN);
-  return min(uMaxCoc, featherN * pastN * uCocScale * uNearBlur);
+  // Smooth band edges over ~0.05 depth units — no hard ring at silhouette
+  float farSide = smoothstep(bandStart + 0.05, bandStart - 0.02, rel);
+  float nearSide = smoothstep(nearStart - 0.05, nearStart + 0.02, rel);
+  float farPast = max(0.0, bandStart - rel);
+  float nearPast = max(0.0, rel - nearStart);
+  float farCoc = farSide * farPast * uCocScale;
+  float nearCoc = nearSide * nearPast * uCocScale * uNearBlur;
+  return min(uMaxCoc, max(farCoc, nearCoc));
 }
 
 // Signed aperture mask in unit disc coords (x,y in [-1,1]).
@@ -125,27 +132,33 @@ float apertureMask(vec2 q, float style, float ang) {
 }
 
 void main() {
-  float rel = texture(uDepth, vUv).r;
+  // Sample depth with a small neighbourhood average — kills ring artifacts
+  // from hard depth discontinuities at the subject silhouette.
+  vec2 tx = uTexel * 1.5;
+  float rel =
+    texture(uDepth, vUv).r * 0.44 +
+    texture(uDepth, vUv + vec2(tx.x, 0.0)).r * 0.14 +
+    texture(uDepth, vUv - vec2(tx.x, 0.0)).r * 0.14 +
+    texture(uDepth, vUv + vec2(0.0, tx.y)).r * 0.14 +
+    texture(uDepth, vUv - vec2(0.0, tx.y)).r * 0.14;
+
   float coc = cocOf(rel);
   vec3 center = texture(uColor, vUv).rgb;
-  if (coc < 0.85) {
+  // Soft early-out (no hard ring at the CoC threshold)
+  if (coc < 0.6) {
     frag = vec4(center, 1.0);
     return;
   }
 
   float lum = dot(center, vec3(0.2126, 0.7152, 0.0722));
-  // Bright points become large bokeh balls; scale with uBokehSize.
-  float hi = smoothstep(0.55, 0.95, lum);
-  float hGain = uHighlightBoost * (0.4 + 2.2 * hi) * mix(1.0, 1.8, uBokehSize - 1.0 > 0.0 ? min(uBokehSize - 1.0, 1.0) : 0.0);
-  // Highlight pixels use a larger effective disc (the “ดวง bokeh”)
-  float radius = coc * mix(1.0, 1.0 + 0.9 * uBokehSize * hi, 1.0);
-  radius = max(radius, coc);
+  float hi = smoothstep(0.78, 0.98, lum);
+  float hGain = uHighlightBoost * hi * (0.5 + 0.5 * uBokehSize);
+  float radius = coc * (1.0 + 0.55 * uBokehSize * hi);
 
-  vec3 c0 = center * (1.0 + hGain * hi);
-
+  vec3 c0 = min(center * (1.0 + hGain), vec3(1.0));
   vec2 centerUV = vUv - 0.5;
-  vec3 sum = c0 * 0.28;
-  float wsum = 0.28;
+  vec3 sum = c0 * 0.6;
+  float wsum = 0.6;
 
   for (int i = 1; i <= TAPS; i++) {
     float fi = float(i);
@@ -168,30 +181,30 @@ void main() {
 
     vec2 offset = q * radius * uTexel;
     vec2 uvc = vUv + offset;
-    // Don't pull from outside the frame (prevents black border bleed).
     if (uvc.x < 0.0 || uvc.x > 1.0 || uvc.y < 0.0 || uvc.y > 1.0) continue;
     uvc = clamp(uvc, vec2(0.001), vec2(0.999));
     float dist = rn * radius;
 
-    float relT = texture(uDepth, uvc).r;
+    float relT =
+      texture(uDepth, uvc).r * 0.5 +
+      texture(uDepth, uvc + tx).r * 0.25 +
+      texture(uDepth, uvc - tx).r * 0.25;
     float cocT = cocOf(relT);
-    if (cocT < 0.5 && relT > uFocusDepth - uSubjectBand) continue; // don't pull sharp subject
+    // Smooth reject of sharp subject (no hard cut → no rings)
+    float subjectW = smoothstep(0.2, 1.2, cocT);
+    if (subjectW < 0.02) continue;
+
     float reach = max(cocT, coc);
-    float w = smoothstep(reach + 1.0, reach - 1.5, dist);
-    if (relT > rel + 0.04 && cocT > 1.5 && coc > 1.0) {
-      w = max(w, smoothstep(cocT + 1.0, cocT - 2.0, dist));
-    }
+    float w = smoothstep(reach + 2.0, reach - 2.0, dist) * subjectW;
     if (w <= 0.001) continue;
 
     vec3 ct = texture(uColor, uvc).rgb;
     float lumT = dot(ct, vec3(0.2126, 0.7152, 0.0722));
-    // Strong bright-sample weight → visible bokeh balls from point lights
-    float hiT = smoothstep(0.5, 0.92, lumT);
-    ct *= 1.0 + hGain * (0.3 + 1.6 * hiT);
-    w *= mask * (0.25 + 0.75 * hiT) * (1.0 - smoothstep(0.86, 1.08, rn));
-    // Soft disc edge for bubble-like rim
+    float hiT = smoothstep(0.72, 0.95, lumT);
+    ct = min(ct * (1.0 + hGain * 0.35 * hiT), vec3(1.0));
+    w *= mask * (0.65 + 0.35 * hiT) * (1.0 - smoothstep(0.88, 1.05, rn));
     if (uStyle > 0.5 && uStyle < 1.5) {
-      w *= 1.0 + 0.45 * smoothstep(0.7, 0.95, rn) * (1.0 - smoothstep(0.95, 1.05, rn));
+      w *= 1.0 + 0.35 * smoothstep(0.7, 0.95, rn) * (1.0 - smoothstep(0.95, 1.05, rn));
     }
     sum += ct * w;
     wsum += w;

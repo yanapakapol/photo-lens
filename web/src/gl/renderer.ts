@@ -222,6 +222,10 @@ export class LensRenderer {
       const uSub = gl.getUniformLocation(p, "uSubjectDepth");
       const uComp = gl.getUniformLocation(p, "uCompression");
       const uAsp = gl.getUniformLocation(p, "uAspect");
+      const uCenter = gl.getUniformLocation(p, "uCenter");
+      // Tele center is top-down image coords → GL UV (y up)
+      const cx = state.tele.cx;
+      const cyGL = 1 - state.tele.cy;
 
       // Color
       gl.bindFramebuffer(gl.FRAMEBUFFER, warped.fb);
@@ -237,6 +241,7 @@ export class LensRenderer {
       gl.uniform1f(uComp, 0.22 * Math.min(1, (k - 1) * 1.4));
       gl.uniform1f(uAsp, aspect);
       gl.uniform1f(uMode, 0);
+      gl.uniform2f(uCenter, cx, cyGL);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       currentTex = warped.tex;
 
@@ -248,6 +253,7 @@ export class LensRenderer {
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, this.depthTex);
       gl.uniform1f(uMode, 1);
+      gl.uniform2f(uCenter, cx, cyGL);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       currentDepth = warpedDepth.tex;
     }
@@ -273,11 +279,13 @@ export class LensRenderer {
       const focal = state.lens.focalMm;
       const apertureGain = (focal / 35) * (1.8 / fStop);
       const resGain = ww / 1100;
+      // Bokeh ball size scales the whole CoC, not just highlights.
+      const sizeGain = 0.45 + 0.75 * state.lens.bokehSize;
       // Background blur grows with distance behind subject (progressive).
-      const cocScale = 85 * apertureGain * resGain * strength;
+      const cocScale = 85 * apertureGain * resGain * strength * sizeGain;
       const maxCoc = Math.min(
-        48 * apertureGain * resGain * strength,
-        Math.min(ww, wh) * 0.05,
+        48 * apertureGain * resGain * strength * sizeGain,
+        Math.min(ww, wh) * 0.07,
       );
       // Subject band: thin enough that distant mountains still blur.
       // f/1.4 ≈ 0.14, f/5.6 ≈ 0.22 (still protects a full person).

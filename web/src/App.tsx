@@ -494,6 +494,7 @@ export default function App() {
   // Viewport interaction: compare drag OR tap-to-focus
   const viewportRef = useRef<HTMLDivElement>(null);
   const draggingCompare = useRef(false);
+  const panRef = useRef(false);
 
   const viewportPos = (e: React.PointerEvent | React.MouseEvent) => {
     const rect = viewportRef.current!.getBoundingClientRect();
@@ -505,37 +506,70 @@ export default function App() {
 
   const onViewportDown = (e: React.PointerEvent) => {
     if (!hasImage || depthPeek) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    // Map click through object-fit:contain content box
+    const cRect = canvas.getBoundingClientRect();
+    const scale = Math.min(cRect.width / canvas.width, cRect.height / canvas.height);
+    const dw = canvas.width * scale;
+    const dh = canvas.height * scale;
+    const ox = cRect.left + (cRect.width - dw) / 2;
+    const oy = cRect.top + (cRect.height - dh) / 2;
+    const cu = (e.clientX - ox) / dw;
+    const cv = (e.clientY - oy) / dh;
+    if (cu < 0 || cu > 1 || cv < 0 || cv > 1) return;
+    const { u, v } = viewportPos(e);
+
     if (compareX >= 0) {
       draggingCompare.current = true;
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      const { u } = viewportPos(e);
       setCompareX(Math.min(1, Math.max(0, u)));
       return;
     }
-    // Tap to focus
-    const { u, v } = viewportPos(e);
-    // canvas uses object-fit contain — map through displayed rect of canvas
-    const canvas = canvasRef.current;
-    if (!canvas || !depthRef.current) return;
-    const cRect = canvas.getBoundingClientRect();
-    const cu = (e.clientX - cRect.left) / cRect.width;
-    const cv = (e.clientY - cRect.top) / cRect.height;
-    if (cu < 0 || cu > 1 || cv < 0 || cv > 1) return;
-    // GL v is bottom-up; depth map is top-down
-    const rel = sampleDepth(depthRef.current, cu, 1 - cv);
+
+    // Tele pan: drag moves zoom center when tele is active
+    if (mode === "tele" && state.tele.k > 1.01) {
+      draggingCompare.current = true; // reuse drag flag name → pan
+      panRef.current = true;
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      setTele({ cx: cu, cy: cv });
+      return;
+    }
+
+    // Tap to focus — depth map is top-down; cv is already top-down
+    if (!depthRef.current) return;
+    const rel = sampleDepth(depthRef.current, cu, cv);
     const focusM = Math.max(0.4, Math.min(12, metersFromRel(rel)));
     setFocusDot({ x: u, y: v });
     setLens({ focusRel: rel, focusM }, true);
-    setToast(`Focus ${focusM.toFixed(1)}m`);
+    setToast(`Focus ${focusM.toFixed(1)}m · depth ${(rel * 100).toFixed(0)}%`);
   };
 
   const onViewportMove = (e: React.PointerEvent) => {
+    if (panRef.current) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const cRect = canvas.getBoundingClientRect();
+      const scale = Math.min(cRect.width / canvas.width, cRect.height / canvas.height);
+      const dw = canvas.width * scale;
+      const dh = canvas.height * scale;
+      const ox = cRect.left + (cRect.width - dw) / 2;
+      const oy = cRect.top + (cRect.height - dh) / 2;
+      const cu = Math.min(1, Math.max(0, (e.clientX - ox) / dw));
+      const cv = Math.min(1, Math.max(0, (e.clientY - oy) / dh));
+      setTele({ cx: cu, cy: cv });
+      return;
+    }
     if (!draggingCompare.current) return;
     const { u } = viewportPos(e);
     setCompareX(Math.min(1, Math.max(0, u)));
   };
   const onViewportUp = () => {
     draggingCompare.current = false;
+    if (panRef.current) {
+      panRef.current = false;
+      setTele({}, true);
+    }
   };
 
   const valueRow = useMemo(() => {
