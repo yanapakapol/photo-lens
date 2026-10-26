@@ -4,11 +4,11 @@
 import * as ort from "onnxruntime-web";
 import type { DepthMap } from "./types";
 
-const MODEL_URL = "/models/dav2-small-int8.onnx";
+const BASE = import.meta.env.BASE_URL || "/";
+const MODEL_URL = `${BASE}models/dav2-small-int8.onnx`;
 const INPUT = 518;
 
-// Use the bundled WASM (no external wasmPaths — that path broke loading).
-// Single thread avoids COOP/COEP requirements.
+// Bundled WASM from ORT package (no external wasmPaths).
 ort.env.wasm.numThreads = 1;
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;

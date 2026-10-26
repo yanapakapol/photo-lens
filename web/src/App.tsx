@@ -348,7 +348,7 @@ export default function App() {
   const loadSample = async () => {
     setBusy("Loading sample…");
     try {
-      const res = await fetch("/samples/street.jpg");
+      const res = await fetch(`${import.meta.env.BASE_URL}samples/street.jpg`);
       if (!res.ok) throw new Error("Sample missing — drop your own photo");
       const blob = await res.blob();
       await loadFile(blob, "sample-street.jpg");
